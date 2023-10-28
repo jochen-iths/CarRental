@@ -2,63 +2,109 @@
 using CarRental.Common.Enums;
 using CarRental.Common.Interfaces;
 using CarRental.Data.Interfaces;
+using System.Reflection;
 
 namespace CarRental.Data.Classes;
 
 public class CollectionData : IData
 {
+    readonly Dictionary<Type, IEnumerable<object>> _data = new();
+
     readonly List<IPerson> _persons = new List<IPerson>();
     readonly List<IVehicle> _vehicles = new List<IVehicle>();
     readonly List<IBooking> _bookings = new List<IBooking>();
 
+    /*Generate ids automatically*/
+    public int NextVehicleId => _vehicles.Count.Equals(0) ? 1 : _vehicles.Max(i => i.Id) + 1;
+    public int NextPersonId => _persons.Count.Equals(0) ? 1 : _persons.Max(i => i.Id) + 1;
+    public int NextBookingId => _bookings.Count.Equals(0) ? 1 : _bookings.Max(i => i.Id) + 1;
+
     public CollectionData() => SeedData();
+
+    public string[] VehicleStatusNames => Enum.GetNames(typeof(VehicleStatuses));
+    public string[] VehicleTypeNames => Enum.GetNames(typeof(VehicleTypes));
+    public VehicleTypes GetVehicleType(string name) => (VehicleTypes)Enum.Parse(typeof(VehicleTypes), name);
 
     void SeedData()
     {
-        _persons.Add(new Customer(12345, "Doe", "John"));
-        _persons.Add(new Customer(98765, "Doe", "Jane"));
+        _persons.Add(new Customer(NextPersonId, 12345, "Doe", "John"));
+        _persons.Add(new Customer(NextPersonId, 98765, "Doe", "Jane"));
 
-        _vehicles.Add(new Car(1, "ABC123", "Volvo", 10000, VehicleTypes.Combi, 1, 200));
-        _vehicles.Add(new Car(2, "DEF456", "Saab", 20000, VehicleTypes.Sedan, 1, 100));
-        _vehicles.Add(new Car(3, "GHI789", "Tesla", 1000, VehicleTypes.Sedan, 3, 100));
-        _vehicles.Add(new Car(4, "JKL012", "Jeep", 5000, VehicleTypes.Van, 1.5, 300));
-        _vehicles.Add(new Motorcycle(5, "MNO345", "Yamaha", 30000, VehicleTypes.Motorcycle, 0.5, 50));
-
-        _bookings.Add(new Booking(1, 12345, new DateOnly(2023, 9, 9)));
-        _bookings.Add(new Booking(1, 12345, new DateOnly(2023, 9, 9))); /*Ska inte processas eftersom billen inte tillgänglig*/
-        _bookings.Add(new Booking(2, 98765, new DateOnly(2023, 9, 10), 100, new DateOnly(2023, 9, 11)));
-        _bookings.Add(new Booking(2, 98765, new DateOnly(2023, 9, 12), 100, new DateOnly(2023, 9, 16)));
-        _bookings.Add(new Booking(2, 98765, new DateOnly(2023, 9, 20), 100, new DateOnly(2023, 9, 25)));
-        _bookings.Add(new Booking(5, 98765, new DateOnly(2023, 9, 20), 100, new DateOnly(2023, 9, 25)));
-        _bookings.Add(new Booking(6, 98765, new DateOnly(2023, 9, 20), 100, new DateOnly(2023, 9, 25)));
-        /*Sista bokning är felaktig (vehicleID existerar inte) och ska inte processas/visas i listan sen*/
-
-        /*Process Bookings*/
-        foreach (var b in _bookings)
-        {
-            if (b == null) continue;
-            var vehicle = _vehicles.SingleOrDefault(v => v.VehicleId == b.VehicleId);
-            var customer = _persons.Select(item => (Customer)item).SingleOrDefault(c => c.Ssn == b.PersonId);
-            if (vehicle == null || customer == null)
-            {
-                b.InvalidateBooking();
-                continue;
-            }
-
-            b.RentVehicle(vehicle, customer);
-
-            b.ReturnVehicle(vehicle);
-        }
+        _vehicles.Add(new Car(NextVehicleId, "ABC123", "Volvo", 10000, VehicleTypes.Combi, 1, 200));
+        _vehicles.Add(new Car(NextVehicleId, "DEF456", "Saab", 20000, VehicleTypes.Sedan, 1, 100));
+        _vehicles.Add(new Car(NextVehicleId, "GHI789", "Tesla", 1000, VehicleTypes.Sedan, 3, 100));
+        _vehicles.Add(new Car(NextVehicleId, "JKL012", "Jeep", 5000, VehicleTypes.Van, 1.5, 300));
+        _vehicles.Add(new Motorcycle(NextVehicleId, "MNO345", "Yamaha", 30000, VehicleTypes.Motorcycle, 0.5, 50));
     }
-    
-    
-    public IEnumerable<IPerson> GetPersons() => _persons;
-    public IEnumerable<IVehicle> GetVehicles(VehicleStatuses status = default)
+
+    public List<T> Get<T>(Func<T, bool>? expression) where T : class
     {
-        if (status is 0)
-            return _vehicles;
-        else
-            return _vehicles.Where(v => v.VehicleStatus.Equals(status));
+        var collectionProperty = GetType().GetFields(BindingFlags.NonPublic | BindingFlags.Instance)
+            .FirstOrDefault(f => f.FieldType == typeof(List<T>) && f.IsInitOnly)
+            ?? throw new InvalidOperationException("Unsupported type");
+
+        var value = collectionProperty.GetValue(this) ?? throw new InvalidDataException("No data found");
+        var collection = ((List<T>)value).AsQueryable();
+        if (expression is null) return collection.ToList();
+
+        return collection.Where(expression).ToList();
     }
-    public IEnumerable<IBooking> GetBookings() => _bookings;
+
+    public T? Single<T>(Func<T, bool> expression) where T : class
+    {
+        var collectionProperty = GetType().GetFields(BindingFlags.NonPublic | BindingFlags.Instance)
+            .FirstOrDefault(f => f.FieldType == typeof(List<T>) && f.IsInitOnly)
+            ?? throw new InvalidOperationException("Unsupported type");
+
+        var value = collectionProperty.GetValue(this) ?? throw new InvalidDataException("No data found");
+        var collection = ((List<T>)value).AsQueryable();
+        var item = collection.SingleOrDefault(expression);
+
+        return item ?? throw new InvalidOperationException("More than one or no matching item found.");
+    }
+
+    public void Add<T>(T item)
+    {
+        if (item is Customer customer)
+            _persons.Add((IPerson)customer);
+        
+        if (item is Car car)
+            _vehicles.Add(car);
+        
+        if (item is Motorcycle motorcycle)
+            _vehicles.Add(motorcycle);
+        
+        if (item is Booking booking)
+            _bookings.Add(booking);
+        
+    }
+
+    public IBooking? RentVehicle(int vehicleId, int customerId)
+    {
+        var vehicle = Single<IVehicle>(v => v.Id == vehicleId);
+        var customer = Single<IPerson>(p => p.Id == customerId);
+        if (vehicle == null || customer == null) return null;
+        vehicle.VehicleStatus = VehicleStatuses.Booked;
+        DateOnly dateRented = DateOnly.FromDateTime(DateTime.Now);
+        var newBooking = new Booking(NextBookingId, vehicle, (Customer)customer, dateRented, vehicle.Odometer);
+        
+        return newBooking;
+    }
+
+    public void ReturnVehicle(int vehicleId, int drivenKm, DateOnly? returnDate)
+    {
+        var vehicle = Single<IVehicle>(v => v.Id == vehicleId);
+        var booking = Single<IBooking>(b => (b.Vehicle == vehicle) && (b.BookingClosed == false));
+        if(vehicle is null || booking is null || returnDate is null) return;
+
+        booking.ProcessReturn(drivenKm, (DateOnly)returnDate);
+        vehicle.VehicleStatus = VehicleStatuses.Available;
+    }
+
+    //TEST ONLY
+/*    public void RemoveAvehicle(int index)
+    {
+        _vehicles.RemoveAt(index);
+    }*/
+
 }
