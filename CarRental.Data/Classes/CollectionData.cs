@@ -8,8 +8,6 @@ namespace CarRental.Data.Classes;
 
 public class CollectionData : IData
 {
-    readonly Dictionary<Type, IEnumerable<object>> _data = new();
-
     readonly List<IPerson> _persons = new List<IPerson>();
     readonly List<IVehicle> _vehicles = new List<IVehicle>();
     readonly List<IBooking> _bookings = new List<IBooking>();
@@ -37,14 +35,19 @@ public class CollectionData : IData
         _vehicles.Add(new Motorcycle(NextVehicleId, "MNO345", "Yamaha", 30000, VehicleTypes.Motorcycle, 0.5, 50));
     }
 
-    public List<T> Get<T>(Func<T, bool>? expression) where T : class
+    public List<T> Reflection<T>() where T : class
     {
         var collectionProperty = GetType().GetFields(BindingFlags.NonPublic | BindingFlags.Instance)
             .FirstOrDefault(f => f.FieldType == typeof(List<T>) && f.IsInitOnly)
             ?? throw new InvalidOperationException("Unsupported type");
 
         var value = collectionProperty.GetValue(this) ?? throw new InvalidDataException("No data found");
-        var collection = ((List<T>)value).AsQueryable();
+        return (List<T>)value;
+    }
+
+    public List<T> Get<T>(Func<T, bool>? expression) where T : class
+    {
+        var collection = Reflection<T>().AsQueryable();
         if (expression is null) return collection.ToList();
 
         return collection.Where(expression).ToList();
@@ -52,41 +55,25 @@ public class CollectionData : IData
 
     public T? Single<T>(Func<T, bool> expression) where T : class
     {
-        var collectionProperty = GetType().GetFields(BindingFlags.NonPublic | BindingFlags.Instance)
-            .FirstOrDefault(f => f.FieldType == typeof(List<T>) && f.IsInitOnly)
-            ?? throw new InvalidOperationException("Unsupported type");
-
-        var value = collectionProperty.GetValue(this) ?? throw new InvalidDataException("No data found");
-        var collection = ((List<T>)value).AsQueryable();
+        var collection = Reflection<T>().AsQueryable();
         var item = collection.SingleOrDefault(expression);
 
         return item ?? throw new InvalidOperationException("More than one or no matching item found.");
     }
 
-    public void Add<T>(T item)
+    public void Add<T>(T item) where T : class
     {
-        if (item is Customer customer)
-            _persons.Add((IPerson)customer);
-        
-        if (item is Car car)
-            _vehicles.Add(car);
-        
-        if (item is Motorcycle motorcycle)
-            _vehicles.Add(motorcycle);
-        
-        if (item is Booking booking)
-            _bookings.Add(booking);
-        
+        Reflection<T>().Add(item);
     }
 
     public IBooking? RentVehicle(int vehicleId, int customerId)
     {
         var vehicle = Single<IVehicle>(v => v.Id == vehicleId);
         var customer = Single<IPerson>(p => p.Id == customerId);
-        if (vehicle == null || customer == null) return null;
+        if (vehicle is null || customer is null || vehicle.Odometer is null) return null;
         vehicle.VehicleStatus = VehicleStatuses.Booked;
         DateOnly dateRented = DateOnly.FromDateTime(DateTime.Now);
-        var newBooking = new Booking(NextBookingId, vehicle, (Customer)customer, dateRented, vehicle.Odometer);
+        var newBooking = new Booking(NextBookingId, vehicle, (Customer)customer, dateRented, (int)vehicle.Odometer);
         
         return newBooking;
     }
